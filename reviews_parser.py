@@ -27,7 +27,7 @@ negative_words = [
 minute_re = re.compile(r"(?<!\d)(\d{1,3})(?:[\.,](\d))?\s*(?:минут|мин\.?|минута|минуты|minutes?|mins?|min\.?)(?!\w)")
 hour_re = re.compile(r"(?<!\d)(\d{1,2})(?:[\.,](\d))?\s*(?:час|часа|часов|hours?|hrs?|h)(?!\w)")
 
-# время словами — сразу переводим в минуты
+# время словами — переводим в минуты
 word_time = [
     (r"полтора часа", 90),
     (r"полторы часа", 90),
@@ -49,9 +49,9 @@ def find_minutes(text):
     """Самое большое время доставки, упомянутое в тексте, в минутах (или NaN)"""
     times = []
     for match in minute_re.finditer(text):
-        times.append(float(match.group(1) + ("." + match.group(2) if match.group(2) else "")))
+        times.append(float(match.group(1)))
     for match in hour_re.finditer(text):
-        hours = float(match.group(1) + ("." + match.group(2) if match.group(2) else ""))
+        hours = float(match.group(1) + ("." + match.group(2) if match.group(2) else ""))  # 
         times.append(hours * 60)
     for pattern, minutes in word_time:
         if re.search(pattern, text):
@@ -71,9 +71,8 @@ def sentiment_by_delivery(has_time, minutes, positive, negative):
 
 def delivery_review_parser(text):
     clean = "" if pd.isna(text) else str(text).lower().replace("ё", "е")
-    clean = re.sub(r"\s+", " ", clean).strip()
+    clean = re.sub(r"\s+", " ", clean).strip()  # замена любой последовательности пробельных символов на один пробел
 
-    # пока считаем, что про доставку ничего нет
     result = {
         "review_has_text": int(clean not in nil_values),
         "mentions_delivery_time": 0,
@@ -129,29 +128,28 @@ def collect_reviews(app_id, output_path):
         raw += len(batch)
 
         df = pd.DataFrame(batch).rename(columns={"content": "review", "at": "review_date", "score": "rating"})
-        df["app_id"] = app_id
-        df = df[["app_id", "reviewId", "review_date", "rating", "thumbsUpCount", "review"]]
-        df = df[~df["reviewId"].isin(seen_ids)]
+        df = df[["reviewId", "review_date", "rating", "thumbsUpCount", "review"]]
+        df = df[~df["reviewId"].isin(seen_ids)]  # строки у которых reviewId не находится в seen
         seen_ids.update(df["reviewId"])
 
-        features = df["review"].apply(delivery_review_parser)
-        df = pd.concat([df.reset_index(drop=True), features.reset_index(drop=True)], axis=1)
-        about_delivery = df[df["mentions_delivery_time"] == 1]
+        features = df["review"].apply(delivery_review_parser)  # применяем парсер ко всем отзывам в батче
+        df = pd.concat([df.reset_index(drop=True), features.reset_index(drop=True)], axis=1)  # добавляем синтетические признаки в датасет (axis=1 == склеиваем по горизонтали)
+        about_delivery = df[df["mentions_delivery_time"] == 1]  # оставляем только отзывы связанные с доставкой
         if len(about_delivery):
             kept.append(about_delivery)
 
-        print(f"raw={raw}, kept={sum(len(part) for part in kept)}")
+        print(f"Всего отзывов: {raw}; оставили: {sum(len(part) for part in kept)}")
         if token is None:
             break
         time.sleep(0.35)
 
-    result = pd.concat(kept, ignore_index=True).head(target_count)
-    result.to_csv(output_path, index=False, encoding="utf-8-sig")
+    result = pd.concat(kept, ignore_index=True).head(target_count)  # соединяем все батчи в один датасет
+    result.to_csv(output_path, index=False, encoding="utf-8")
     print(f"{output_path}: сохранено {len(result)} отзывов про доставку\n")
     return result
 
 
 if __name__ == "__main__":
     for app_id, (name, path) in apps.items():
-        print(f"Собираем отзывы для: {name}")
+        print(f"Сбор отзывов для: {name}")
         collect_reviews(app_id, path)
